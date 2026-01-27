@@ -1,0 +1,36 @@
+modules:
+  trigger:
+    - key: workflow-automation-issue-created
+      function: main
+      events:
+        - jira:issue_created
+    - key: workflow-automation-issue-updated
+      function: main
+      events:
+        - jira:issue_updated
+  jira:globalPage:
+    - key: automation-rules
+      resource: main
+      resolver:
+        function: resolver
+      title: Automation Rules
+  function:
+    - key: main
+      handler: index.run
+    - key: resolver
+      handler: resolver.handler
+
+resources:
+  - key: main
+    path: src/frontend
+
+permissions:
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - storage:app
+
+app:
+  runtime:
+    name: nodejs20.x
+  id: ari:cloud:ecosystem::app/aebab142-5d06-435f-b12a-b82cc322164e

@@ -1,0 +1,33 @@
+{
+  "ruleId": "rule-2",
+  "ruleName": "Auto-assign unassigned issues in PROJ",
+  "projectKey": "PROJ",
+  "enabled": true,
+  "createdAt": "2026-01-26T10:00:00.000Z",
+  "updatedAt": "2026-01-26T10:00:00.000Z",
+  "conditions": [
+    {
+      "field": "projectKey",
+      "operator": "equals",
+      "value": "PROJ"
+    },
+    {
+      "field": "assignee",
+      "operator": "isEmpty",
+      "value": ""
+    },
+    {
+      "field": "status",
+      "operator": "equals",
+      "value": "To Do"
+    }
+  ],
+  "actions": [
+    {
+      "type": "reassign",
+      "params": {
+        "assigneeAccountId": "557058:abc123def456"
+      }
+    }
+  ]
+}

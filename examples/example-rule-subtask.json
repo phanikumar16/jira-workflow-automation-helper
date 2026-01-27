@@ -1,0 +1,35 @@
+{
+  "ruleId": "rule-3",
+  "ruleName": "Create review subtask for high priority issues",
+  "projectKey": "",
+  "enabled": true,
+  "createdAt": "2026-01-26T10:00:00.000Z",
+  "updatedAt": "2026-01-26T10:00:00.000Z",
+  "conditions": [
+    {
+      "field": "priority",
+      "operator": "equals",
+      "value": "Highest"
+    },
+    {
+      "field": "eventType",
+      "operator": "equals",
+      "value": "jira:issue_created"
+    }
+  ],
+  "actions": [
+    {
+      "type": "createSubtask",
+      "params": {
+        "summary": "Code review required",
+        "description": "This high priority issue requires a code review before implementation."
+      }
+    },
+    {
+      "type": "addLabel",
+      "params": {
+        "label": "review-needed"
+      }
+    }
+  ]
+}

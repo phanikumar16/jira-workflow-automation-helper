@@ -1,0 +1,39 @@
+{
+  "ruleId": "rule-1",
+  "ruleName": "Auto-label high priority bugs",
+  "projectKey": "PROJ",
+  "enabled": true,
+  "createdAt": "2026-01-26T10:00:00.000Z",
+  "updatedAt": "2026-01-26T10:00:00.000Z",
+  "conditions": [
+    {
+      "field": "issueType",
+      "operator": "equals",
+      "value": "Bug"
+    },
+    {
+      "field": "priority",
+      "operator": "equals",
+      "value": "High"
+    },
+    {
+      "field": "eventType",
+      "operator": "equals",
+      "value": "jira:issue_created"
+    }
+  ],
+  "actions": [
+    {
+      "type": "addLabel",
+      "params": {
+        "label": "urgent"
+      }
+    },
+    {
+      "type": "addLabel",
+      "params": {
+        "label": "needs-review"
+      }
+    }
+  ]
+}
