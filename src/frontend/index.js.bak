@@ -1,0 +1,378 @@
+/**
+ * Jira Workflow Automation Helper - Rule Management UI
+ * Based on POC: Auto-label, Create Subtask, Auto-assign rules
+ */
+
+const storage = {
+  getAllRules: async () => {
+    const rules = JSON.parse(localStorage.getItem('automation-rules') || '[]');
+    console.log('Loaded rules:', rules.length);
+    return rules;
+  },
+
+  saveRules: async (rules) => {
+    localStorage.setItem('automation-rules', JSON.stringify(rules));
+    // Sync to Forge storage
+    try {
+      if (window.AP?.invoke) {
+        await window.AP.invoke('resolver', { 
+          functionKey: 'saveRules',
+          payload: { rules } 
+        });
+      }
+    } catch (e) {
+      console.log('Forge sync skipped');
+    }
+  },
+
+  addRule: async (rule) => {
+    const rules = await storage.getAllRules();
+    const newRule = {
+      ...rule,
+      ruleId: `rule-${Date.now()}`,
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    rules.push(newRule);
+    await storage.saveRules(rules);
+    return newRule;
+  },
+
+  updateRule: async (ruleId, updates) => {
+    const rules = await storage.getAllRules();
+    const rule = rules.find(r => r.ruleId === ruleId);
+    if (rule) {
+      Object.assign(rule, updates, { updatedAt: new Date().toISOString() });
+      await storage.saveRules(rules);
+    }
+  },
+
+  deleteRule: async (ruleId) => {
+    const rules = await storage.getAllRules();
+    const filtered = rules.filter(r => r.ruleId !== ruleId);
+    await storage.saveRules(filtered);
+  },
+
+  toggleRule: async (ruleId) => {
+    const rules = await storage.getAllRules();
+    const rule = rules.find(r => r.ruleId === ruleId);
+    if (rule) {
+      rule.enabled = !rule.enabled;
+      rule.updatedAt = new Date().toISOString();
+      await storage.saveRules(rules);
+    }
+  }
+};
+
+// Condition field options
+const CONDITION_FIELDS = {
+  eventType: { label: 'Event Type', operators: ['equals'], values: ['jira:issue_created', 'jira:issue_updated'] },
+  issueType: { label: 'Issue Type', operators: ['equals'], values: ['Bug', 'Task', 'Story', 'Sub-task', 'Epic'] },
+  priority: { label: 'Priority', operators: ['equals'], values: ['Lowest', 'Low', 'Medium', 'High', 'Highest', 'Critical'] },
+  status: { label: 'Status', operators: ['equals'], values: ['To Do', 'In Progress', 'Done', 'In Review', 'Closed'] },
+  assignee: { label: 'Assignee', operators: ['isEmpty', 'equals'], values: [] },
+  projectKey: { label: 'Project Key', operators: ['equals'], values: [] }
+};
+
+// Action types and their required params
+const ACTION_TYPES = {
+  addLabel: { 
+    label: 'Add Label', 
+    params: ['label']
+  },
+  createSubtask: { 
+    label: 'Create Subtask', 
+    params: ['summary', 'description']
+  },
+  reassign: { 
+    label: 'Reassign Issue', 
+    params: ['assigneeAccountId']
+  }
+};
+
+// Render rules list
+async function render() {
+  const app = document.getElementById('app');
+  const rules = await storage.getAllRules();
+
+  if (rules.length === 0) {
+    app.innerHTML = `
+      <div class="header">
+        <h1>Automation Rules</h1>
+        <button id="btn-create-rule" class="btn-primary">+ Create Rule</button>
+      </div>
+      <div class="empty-state">
+        <p>No automation rules yet. Create one to get started!</p>
+      </div>
+    `;
+  } else {
+    let rulesHtml = `
+      <div class="header">
+        <h1>Automation Rules</h1>
+        <button id="btn-create-rule" class="btn-primary">+ Create Rule</button>
+      </div>
+      <div class="rules-list">
+    `;
+
+    rules.forEach(rule => {
+      rulesHtml += `
+        <div class="rule-card">
+          <div class="rule-header">
+            <div class="rule-title">
+              <input type="checkbox" class="rule-toggle" data-rule-id="${rule.ruleId}" ${rule.enabled ? 'checked' : ''}>
+              <h3>${rule.ruleName}</h3>
+            </div>
+            <button class="btn-delete" data-rule-id="${rule.ruleId}">Delete</button>
+          </div>
+          <div class="rule-details">
+            <div class="conditions">
+              <strong>Conditions:</strong>
+              <ul>
+                ${rule.conditions.map(c => `<li>${CONDITION_FIELDS[c.field]?.label || c.field} ${c.operator} ${c.value}</li>`).join('')}
+              </ul>
+            </div>
+            <div class="actions">
+              <strong>Actions:</strong>
+              <ul>
+                ${rule.actions.map(a => {
+                  if (a.type === 'addLabel') return `<li>Add Label: ${a.params.label}</li>`;
+                  if (a.type === 'createSubtask') return `<li>Create Subtask: ${a.params.summary}</li>`;
+                  if (a.type === 'reassign') return `<li>Reassign to: ${a.params.assigneeAccountId}</li>`;
+                  return '';
+                }).join('')}
+              </ul>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    rulesHtml += '</div>';
+    app.innerHTML = rulesHtml;
+  }
+
+  attachEventListeners();
+}
+
+// Show create form
+function showCreateForm() {
+  const app = document.getElementById('app');
+  
+  let conditionsHtml = '<div class="conditions-builder">';
+  conditionsHtml += '<h4>Conditions (all must be true)</h4>';
+  conditionsHtml += '<div id="conditions-list"></div>';
+  conditionsHtml += '<button id="btn-add-condition" class="btn-secondary">+ Add Condition</button>';
+  conditionsHtml += '</div>';
+
+  let actionsHtml = '<div class="actions-builder">';
+  actionsHtml += '<h4>Actions (all will execute)</h4>';
+  actionsHtml += '<div id="actions-list"></div>';
+  actionsHtml += '<button id="btn-add-action" class="btn-secondary">+ Add Action</button>';
+  actionsHtml += '</div>';
+
+  app.innerHTML = `
+    <div class="form-container">
+      <h2>Create Automation Rule</h2>
+      <div class="form-group">
+        <label>Rule Name</label>
+        <input type="text" id="ruleName" placeholder="e.g., Auto-label high priority bugs">
+      </div>
+
+      ${conditionsHtml}
+      ${actionsHtml}
+
+      <div class="form-actions">
+        <button id="btn-save-rule" class="btn-primary">Create Rule</button>
+        <button id="btn-cancel-rule" class="btn-secondary">Cancel</button>
+      </div>
+    </div>
+  `;
+
+  // Initialize conditions and actions lists
+  document.getElementById('conditions-list').innerHTML = '<div class="condition-item"></div>';
+  document.getElementById('actions-list').innerHTML = '<div class="action-item"></div>';
+
+  attachEventListeners();
+}
+
+// Add condition row
+function addConditionRow() {
+  const condList = document.getElementById('conditions-list');
+  const html = `
+    <div class="condition-item">
+      <select class="condition-field">
+        <option value="">Select field...</option>
+        ${Object.entries(CONDITION_FIELDS).map(([key, val]) => 
+          `<option value="${key}">${val.label}</option>`
+        ).join('')}
+      </select>
+      <select class="condition-operator">
+        <option value="">Select operator...</option>
+        <option value="equals">equals</option>
+        <option value="isEmpty">is empty</option>
+      </select>
+      <input type="text" class="condition-value" placeholder="Value">
+      <button class="btn-remove">Remove</button>
+    </div>
+  `;
+  condList.insertAdjacentHTML('beforeend', html);
+  attachEventListeners();
+}
+
+// Add action row
+function addActionRow() {
+  const actList = document.getElementById('actions-list');
+  const html = `
+    <div class="action-item">
+      <select class="action-type">
+        <option value="">Select action...</option>
+        ${Object.entries(ACTION_TYPES).map(([key, val]) => 
+          `<option value="${key}">${val.label}</option>`
+        ).join('')}
+      </select>
+      <div class="action-params"></div>
+      <button class="btn-remove">Remove</button>
+    </div>
+  `;
+  actList.insertAdjacentHTML('beforeend', html);
+  attachEventListeners();
+}
+
+// Attach event listeners
+function attachEventListeners() {
+  // Create rule button
+  const createBtn = document.getElementById('btn-create-rule');
+  if (createBtn) createBtn.addEventListener('click', showCreateForm);
+
+  // Save rule button
+  const saveBtn = document.getElementById('btn-save-rule');
+  if (saveBtn) saveBtn.addEventListener('click', handleSaveRule);
+
+  // Cancel button
+  const cancelBtn = document.getElementById('btn-cancel-rule');
+  if (cancelBtn) cancelBtn.addEventListener('click', render);
+
+  // Add condition button
+  const addCondBtn = document.getElementById('btn-add-condition');
+  if (addCondBtn) addCondBtn.addEventListener('click', addConditionRow);
+
+  // Add action button
+  const addActBtn = document.getElementById('btn-add-action');
+  if (addActBtn) addActBtn.addEventListener('click', addActionRow);
+
+  // Delete rule buttons
+  document.querySelectorAll('[data-rule-id]').forEach(btn => {
+    if (btn.classList.contains('btn-delete')) {
+      btn.addEventListener('click', async (e) => {
+        const ruleId = e.target.dataset.ruleId;
+        if (confirm('Delete this rule?')) {
+          await storage.deleteRule(ruleId);
+          render();
+        }
+      });
+    }
+  });
+
+  // Toggle rule checkbox
+  document.querySelectorAll('.rule-toggle').forEach(checkbox => {
+    checkbox.addEventListener('change', async (e) => {
+      const ruleId = e.target.dataset.ruleId;
+      await storage.toggleRule(ruleId);
+      render();
+    });
+  });
+
+  // Remove buttons
+  document.querySelectorAll('.btn-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.target.closest('.condition-item, .action-item').remove();
+    });
+  });
+
+  // Action type change to show params
+  document.querySelectorAll('.action-type').forEach(select => {
+    select.addEventListener('change', (e) => {
+      const actionType = e.target.value;
+      const paramsDiv = e.target.parentElement.querySelector('.action-params');
+      paramsDiv.innerHTML = '';
+
+      if (actionType && ACTION_TYPES[actionType]) {
+        ACTION_TYPES[actionType].params.forEach(param => {
+          if (param === 'label') {
+            paramsDiv.innerHTML += `<input type="text" class="param-label" placeholder="Label name">`;
+          } else if (param === 'summary') {
+            paramsDiv.innerHTML += `<input type="text" class="param-summary" placeholder="Subtask summary">`;
+          } else if (param === 'description') {
+            paramsDiv.innerHTML += `<textarea class="param-description" placeholder="Subtask description"></textarea>`;
+          } else if (param === 'assigneeAccountId') {
+            paramsDiv.innerHTML += `<input type="text" class="param-assignee" placeholder="Assignee Account ID">`;
+          }
+        });
+      }
+    });
+  });
+}
+
+// Save rule
+async function handleSaveRule() {
+  const ruleName = document.getElementById('ruleName').value;
+  if (!ruleName) {
+    alert('Please enter a rule name');
+    return;
+  }
+
+  // Parse conditions
+  const conditions = [];
+  document.querySelectorAll('.condition-item').forEach(item => {
+    const field = item.querySelector('.condition-field').value;
+    const operator = item.querySelector('.condition-operator').value;
+    const value = item.querySelector('.condition-value').value;
+
+    if (field && operator && value) {
+      conditions.push({ field, operator, value });
+    }
+  });
+
+  // Parse actions
+  const actions = [];
+  document.querySelectorAll('.action-item').forEach(item => {
+    const type = item.querySelector('.action-type').value;
+    if (!type) return;
+
+    const params = {};
+    if (type === 'addLabel') {
+      params.label = item.querySelector('.param-label')?.value;
+    } else if (type === 'createSubtask') {
+      params.summary = item.querySelector('.param-summary')?.value;
+      params.description = item.querySelector('.param-description')?.value;
+    } else if (type === 'reassign') {
+      params.assigneeAccountId = item.querySelector('.param-assignee')?.value;
+    }
+
+    if (Object.keys(params).some(k => params[k])) {
+      actions.push({ type, params });
+    }
+  });
+
+  if (conditions.length === 0) {
+    alert('Add at least one condition');
+    return;
+  }
+
+  if (actions.length === 0) {
+    alert('Add at least one action');
+    return;
+  }
+
+  await storage.addRule({
+    ruleName,
+    conditions,
+    actions
+  });
+
+  render();
+}
+
+// Initialize
+render();

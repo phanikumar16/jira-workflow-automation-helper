@@ -1,57 +1,328 @@
 /**
- * Main entry point for Jira Forge Workflow Automation Helper
- * Handles issue created and updated events
+ * Jira Workflow Automation Helper - Backend
+ * Rule Evaluation and Action Execution Engine
  */
 
-const { ruleEngine } = require('./rule-engine');
-const { ruleStorage } = require('./storage');
+const { storage } = require('@forge/api');
+const api = require('./api');
 
-/**
- * Main handler for Jira issue events
- * @param {Object} event - The Jira event object
- */
-exports.run = async function run(event) {
-  console.log('=== EVENT TRIGGERED ===');
-  console.log('Event type:', event.eventType);
-  console.log('Issue:', event.issue.key);
-  console.log('Issue Priority:', event.issue.fields.priority?.name);
+console.log('╔════════════════════════════════════════╗');
+console.log('║  AUTOMATION MODULE LOADED              ║');
+console.log('╚════════════════════════════════════════╝');
 
-  try {
-    // Get all automation rules
-    const rules = await ruleStorage.getAllRules();
-    console.log(`[RULES] Total rules in storage: ${rules.length}`);
-    console.log('[RULES] Rules:', JSON.stringify(rules, null, 2));
-    
-    const enabledRules = rules.filter(rule => rule.enabled === true);
-    console.log(`[RULES] Enabled rules: ${enabledRules.length}`);
+// ===== INFINITE LOOP PREVENTION =====
 
-    if (enabledRules.length === 0) {
-      console.log('[RULES] No enabled rules found - exiting');
-      return;
-    }
+const AUTOMATION_USER_MARKER = 'automation-helper-v1';
+let processedEvents = new Map(); // Track processed events
 
-    // Get full issue details
-    const issue = event.issue;
-    
-    // Evaluate each rule and execute actions if conditions match
-    for (const rule of enabledRules) {
-      try {
-        console.log(`[RULE] Evaluating rule: "${rule.ruleName}"`);
-        const shouldExecute = await ruleEngine.evaluateRule(rule, issue, event);
-        
-        if (shouldExecute) {
-          console.log(`[RULE] ✓ Rule "${rule.ruleName}" conditions met. Executing actions...`);
-          await ruleEngine.executeActions(rule.actions, issue);
-          console.log(`[RULE] ✓ Actions executed successfully`);
-        } else {
-          console.log(`[RULE] ✗ Rule "${rule.ruleName}" conditions not met. Skipping.`);
-        }
-      } catch (error) {
-        console.error(`[RULE] Error processing rule "${rule.ruleName}":`, error);
+function isAutomationEvent(event) {
+  // Check if event was triggered by this automation
+  if (event.changelog && event.changelog.histories) {
+    for (const history of event.changelog.histories) {
+      if (history.author && history.author.name && 
+          history.author.name.includes(AUTOMATION_USER_MARKER)) {
+        return true;
       }
     }
-  } catch (error) {
-    console.error('[ERROR] Workflow automation error:', error);
-    throw error;
   }
+  return false;
+}
+
+function getEventFingerprint(event) {
+  // Create unique ID for this event to prevent processing same event twice
+  return `${event.issue.key}-${event.eventType}-${event.timestamp}`;
+}
+
+// ===== CONDITION EVALUATION =====
+
+const ConditionEvaluator = {
+  evaluate: async function(conditions, issue, event) {
+    if (!conditions || conditions.length === 0) return true; // No conditions = always true
+    
+    // AND logic: all conditions must be true
+    for (const condition of conditions) {
+      const result = await this.evaluateCondition(condition, issue, event);
+      if (!result) {
+        console.log(`[CONDITION] Failed: ${condition.field} ${condition.operator} ${condition.value}`);
+        return false;
+      }
+    }
+    
+    return true;
+  },
+  
+  evaluateCondition: async function(condition, issue, event) {
+    const { field, operator, value } = condition;
+    
+    let fieldValue;
+    
+    switch (field) {
+      case 'issueType':
+        fieldValue = issue.fields.issuetype.name;
+        break;
+      case 'priority':
+        fieldValue = issue.fields.priority?.name;
+        break;
+      case 'status':
+        fieldValue = issue.fields.status?.name;
+        break;
+      case 'projectKey':
+        fieldValue = issue.fields.project?.key;
+        break;
+      case 'assignee':
+        fieldValue = issue.fields.assignee;
+        break;
+      case 'labels':
+        fieldValue = issue.fields.labels || [];
+        break;
+      default:
+        return false;
+    }
+    
+    // Evaluate based on operator
+    switch (operator) {
+      case 'equals':
+        return fieldValue === value;
+      
+      case 'in':
+        // Priority in list
+        return value.split(',').map(v => v.trim()).includes(fieldValue);
+      
+      case 'isEmpty':
+        return !fieldValue || (Array.isArray(fieldValue) && fieldValue.length === 0);
+      
+      case 'isNotEmpty':
+        return fieldValue && (Array.isArray(fieldValue) ? fieldValue.length > 0 : true);
+      
+      case 'contains':
+        if (Array.isArray(fieldValue)) {
+          return fieldValue.includes(value);
+        }
+        return fieldValue?.includes(value);
+      
+      case 'notContains':
+        if (Array.isArray(fieldValue)) {
+          return !fieldValue.includes(value);
+        }
+        return !fieldValue?.includes(value);
+      
+      default:
+        return false;
+    }
+  }
+};
+
+// ===== ACTION EXECUTION =====
+
+const ActionExecutor = {
+  execute: async function(actions, issue) {
+    if (!actions || actions.length === 0) return;
+    
+    for (const action of actions) {
+      try {
+        console.log(`[ACTION] Executing: ${action.type}`);
+        
+        switch (action.type) {
+          case 'addLabel':
+            await this.addLabel(issue, action.params.label);
+            break;
+          
+          case 'createSubtask':
+            await this.createSubtask(issue, action.params);
+            break;
+          
+          case 'assignIssue':
+            await this.assignIssue(issue, action.params.assignee);
+            break;
+          
+          case 'updateField':
+            await this.updateField(issue, action.params);
+            break;
+          
+          default:
+            console.warn(`[ACTION] Unknown action type: ${action.type}`);
+        }
+        
+        console.log(`[ACTION] ✓ Executed: ${action.type}`);
+      } catch (error) {
+        console.error(`[ACTION] ✗ Failed to execute ${action.type}:`, error);
+      }
+    }
+  },
+  
+  addLabel: async function(issue, label) {
+    if (!label) return;
+    
+    const currentLabels = issue.fields.labels || [];
+    
+    // Avoid duplicates
+    if (currentLabels.includes(label)) {
+      console.log(`[ACTION] Label "${label}" already exists`);
+      return;
+    }
+    
+    const newLabels = [...currentLabels, label];
+    
+    await api.updateIssue(issue.key, {
+      labels: newLabels
+    });
+    
+    console.log(`[ACTION] Added label: "${label}"`);
+  },
+  
+  createSubtask: async function(issue, params) {
+    const { summary, description } = params;
+    
+    if (!summary) {
+      throw new Error('Subtask summary is required');
+    }
+    
+    // Check if subtask with same summary already exists
+    const existingSubtasks = issue.fields.subtasks || [];
+    if (existingSubtasks.some(st => st.fields.summary === summary)) {
+      console.log(`[ACTION] Subtask "${summary}" already exists`);
+      return;
+    }
+    
+    const subtaskPayload = {
+      fields: {
+        project: { key: issue.fields.project.key },
+        parent: { key: issue.key },
+        summary: summary,
+        issuetype: { name: 'Sub-task' }
+      }
+    };
+    
+    if (description) {
+      subtaskPayload.fields.description = description;
+    }
+    
+    const response = await api.createIssue(subtaskPayload);
+    console.log(`[ACTION] Created subtask: ${response.key}`);
+  },
+  
+  assignIssue: async function(issue, assignee) {
+    if (!assignee) return;
+    
+    // Check if already assigned to this person
+    if (issue.fields.assignee?.emailAddress === assignee) {
+      console.log(`[ACTION] Already assigned to ${assignee}`);
+      return;
+    }
+    
+    await api.updateIssue(issue.key, {
+      assignee: { name: assignee }
+    });
+    
+    console.log(`[ACTION] Assigned issue to: ${assignee}`);
+  },
+  
+  updateField: async function(issue, params) {
+    const { fieldKey, value } = params;
+    
+    if (!fieldKey || !value) {
+      throw new Error('Field key and value are required');
+    }
+    
+    const payload = {};
+    payload[fieldKey] = value;
+    
+    await api.updateIssue(issue.key, payload);
+    console.log(`[ACTION] Updated field ${fieldKey} to ${value}`);
+  }
+};
+
+// ===== MAIN EVENT HANDLER =====
+
+exports.run = async function run(event) {
+  console.log('');
+  console.log('╔════════════════════════════════════════╗');
+  console.log('║  AUTOMATION TRIGGERED                  ║');
+  console.log('╚════════════════════════════════════════╝');
+  
+  console.log(`[EVENT] Type: ${event.eventType}`);
+  console.log(`[EVENT] Issue: ${event.issue.key}`);
+  console.log(`[EVENT] Priority: ${event.issue.fields.priority?.name}`);
+  console.log(`[EVENT] Status: ${event.issue.fields.status?.name}`);
+  
+  // Infinite loop prevention
+  if (isAutomationEvent(event)) {
+    console.log('[EVENT] ⚠ Skipping: Event caused by automation');
+    return;
+  }
+  
+  const fingerprint = getEventFingerprint(event);
+  if (processedEvents.has(fingerprint)) {
+    console.log('[EVENT] ⚠ Skipping: Event already processed');
+    return;
+  }
+  processedEvents.set(fingerprint, true);
+  
+  // Cleanup old events
+  if (processedEvents.size > 1000) {
+    processedEvents.clear();
+  }
+  
+  try {
+    // Get all rules
+    const rules = await storage.get('automation-rules') || [];
+    console.log(`[STORAGE] Retrieved from Forge storage`);
+    console.log(`[STORAGE] Raw value:`, rules);
+    console.log(`[RULES] Total rules: ${rules.length}`);
+    console.log(`[RULES] Rules:`, JSON.stringify(rules, null, 2));
+    
+    const enabledRules = rules.filter(r => r.enabled);
+    console.log(`[RULES] Enabled rules: ${enabledRules.length}`);
+    
+    if (enabledRules.length === 0) {
+      console.log('[RULES] No enabled rules found');
+      return;
+    }
+    
+    // Evaluate and execute each rule
+    for (const rule of enabledRules) {
+      console.log(`\n[RULE] Checking: "${rule.name}"`);
+      console.log(`[RULE] Trigger: ${rule.trigger}`);
+      
+      // Check if trigger matches
+      const triggerMatches = 
+        rule.trigger === 'both' ||
+        (rule.trigger === 'created' && event.eventType === 'issue_created') ||
+        (rule.trigger === 'updated' && event.eventType === 'issue_updated');
+      
+      if (!triggerMatches) {
+        console.log(`[RULE] ✗ Trigger doesn't match`);
+        continue;
+      }
+      
+      // Evaluate conditions
+      const conditionsMet = await ConditionEvaluator.evaluate(
+        rule.conditions,
+        event.issue,
+        event
+      );
+      
+      if (!conditionsMet) {
+        console.log(`[RULE] ✗ Conditions not met`);
+        continue;
+      }
+      
+      console.log(`[RULE] ✓ Conditions met! Executing actions...`);
+      
+      // Execute actions
+      await ActionExecutor.execute(rule.actions, event.issue);
+      
+      console.log(`[RULE] ✓ Rule completed successfully`);
+    }
+    
+  } catch (error) {
+    console.error('[ERROR] Automation execution failed:', error);
+    console.error('[ERROR] Stack:', error.stack);
+  }
+  
+  console.log('');
+  console.log('╔════════════════════════════════════════╗');
+  console.log('║  AUTOMATION COMPLETED                  ║');
+  console.log('╚════════════════════════════════════════╝');
+  console.log('');
 };
