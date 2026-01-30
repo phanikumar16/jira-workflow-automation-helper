@@ -3,60 +3,48 @@
  * Rule Management Interface
  */
 
-// Forge bridge will be available globally in Custom UI context
+import { invoke } from '@forge/bridge';
+
 const API = {
   getAllRules: async () => {
     try {
-      // Try to invoke resolver for Forge storage
-      if (typeof bridge !== 'undefined' && bridge) {
-        try {
-          const result = await bridge.invoke('getAllRules');
-          console.log('[API] Got rules from Forge storage:', result);
-          if (result && result.length > 0) {
-            return result;
-          }
-        } catch (e) {
-          console.warn('[API] Forge resolver failed:', e);
-        }
-      }
-      
-      // Fallback to localStorage
-      const stored = localStorage.getItem('automation-rules');
-      if (stored) {
-        console.log('[API] Using rules from localStorage');
-        return JSON.parse(stored);
-      }
+      const result = await invoke('getAllRules');
+      return result || [];
     } catch (e) {
-      console.warn('[API] localStorage error:', e);
+      console.error('[API] Forge bridge error:', e);
+      return [];
     }
-    return [];
   },
-  
-  saveRules: async (rules) => {
+  createRule: async (rule) => {
     try {
-      console.log('[API] Saving', rules.length, 'rules');
-      
-      // Save to localStorage immediately
-      localStorage.setItem('automation-rules', JSON.stringify(rules));
-      console.log('[API] Saved to localStorage');
-      
-      // Try to sync to Forge storage
-      if (typeof bridge !== 'undefined' && bridge) {
-        try {
-          const result = await bridge.invoke('saveRules', { rules });
-          console.log('[API] Synced to Forge storage:', result);
-          return result;
-        } catch (e) {
-          console.error('[API] Failed to sync to Forge storage:', e);
-          // Still return success since localStorage is saved
-          return { success: true, local: true };
-        }
-      }
-      
-      return { success: true, local: true };
-    } catch (error) {
-      console.error('[API] Error saving rules:', error);
-      throw error;
+      await invoke('createRule', { rule });
+    } catch (e) {
+      console.error('[API] Failed to create rule:', e);
+      throw e;
+    }
+  },
+  updateRule: async (ruleId, updates) => {
+    try {
+      await invoke('updateRule', { ruleId, updates });
+    } catch (e) {
+      console.error('[API] Failed to update rule:', e);
+      throw e;
+    }
+  },
+  deleteRule: async (ruleId) => {
+    try {
+      await invoke('deleteRule', { ruleId });
+    } catch (e) {
+      console.error('[API] Failed to delete rule:', e);
+      throw e;
+    }
+  },
+  toggleRule: async (ruleId) => {
+    try {
+      await invoke('toggleRule', { ruleId });
+    } catch (e) {
+      console.error('[API] Failed to toggle rule:', e);
+      throw e;
     }
   }
 };
@@ -351,29 +339,26 @@ function attachListenersList() {
   }
   
   document.querySelectorAll('.toggle-rule').forEach(toggle => {
-    toggle.addEventListener('change', (e) => {
+    toggle.addEventListener('change', async (e) => {
       const ruleId = e.target.closest('.rule-card').dataset.ruleId;
-      const rule = rules.find(r => r.id === ruleId);
-      if (rule) {
-        rule.enabled = e.target.checked;
-        saveRules();
-      }
+      await API.toggleRule(ruleId);
+      await renderApp();
     });
   });
   
   document.querySelectorAll('.btn-edit').forEach(btn => {
     btn.addEventListener('click', (e) => {
-      // TODO: Implement edit mode
+      // TODO: Implement edit mode (fetch rule and show form)
       alert('Edit mode coming soon');
     });
   });
   
   document.querySelectorAll('.btn-delete').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
       const ruleId = e.target.dataset.ruleId;
       if (confirm('Delete this rule?')) {
-        rules = rules.filter(r => r.id !== ruleId);
-        saveRules();
+        await API.deleteRule(ruleId);
+        await renderApp();
       }
     });
   });
@@ -464,10 +449,9 @@ function attachListenersForm() {
       createdAt: new Date().toISOString()
     };
     
-    rules.push(rule);
-    await saveRules();
+    await API.createRule(rule);
     currentPage = 'list';
-    renderApp();
+    await renderApp();
   });
   
   // Cancel
@@ -477,15 +461,7 @@ function attachListenersForm() {
   });
 }
 
-async function saveRules() {
-  try {
-    await API.saveRules(rules);
-    renderApp();
-  } catch (error) {
-    console.error('Error saving rules:', error);
-    alert('Error saving rules');
-  }
-}
+// saveRules is no longer needed; all CRUD is via backend
 
 // ===== INIT =====
 

@@ -8,7 +8,7 @@ const RuleForm = ({ rule, onSubmit, onCancel, saving }) => {
   const [formData, setFormData] = useState({
     ruleName: '',
     projectKey: '',
-    enabled: true,
+    active: true,
     conditions: [],
     actions: []
   });
@@ -29,7 +29,7 @@ const RuleForm = ({ rule, onSubmit, onCancel, saving }) => {
       setFormData({
         ruleName: rule.ruleName || '',
         projectKey: rule.projectKey || '',
-        enabled: rule.enabled !== undefined ? rule.enabled : true,
+        active: rule.active !== undefined ? rule.active : true,
         conditions: rule.conditions || [],
         actions: rule.actions || []
       });
@@ -177,10 +177,10 @@ const RuleForm = ({ rule, onSubmit, onCancel, saving }) => {
         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold', fontSize: '14px' }}>
           <input
             type="checkbox"
-            checked={formData.enabled}
-            onChange={(e) => handleInputChange('enabled', e.target.checked)}
+            checked={formData.active}
+            onChange={(e) => handleInputChange('active', e.target.checked)}
           />
-          Enabled
+          Active
         </label>
       </div>
 

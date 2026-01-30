@@ -64,13 +64,13 @@ const RuleList = ({ rules, onCreateRule, onEditRule, onToggleRule, onDeleteRule 
                         style={{
                           padding: '2px 8px',
                           borderRadius: '3px',
-                          backgroundColor: rule.enabled ? '#e3fcef' : '#f4f5f7',
-                          color: rule.enabled ? '#006644' : '#6b778c',
+                          backgroundColor: rule.active !== false ? '#e3fcef' : '#f4f5f7',
+                          color: rule.active !== false ? '#006644' : '#6b778c',
                           fontWeight: 'bold',
                           fontSize: '12px'
                         }}
                       >
-                        {rule.enabled ? 'Enabled' : 'Disabled'}
+                        {rule.active !== false ? 'Active' : 'Inactive'}
                       </span>
                     </span>
                   </div>
@@ -80,15 +80,15 @@ const RuleList = ({ rules, onCreateRule, onEditRule, onToggleRule, onDeleteRule 
                     onClick={() => onToggleRule(rule.ruleId)}
                     style={{
                       padding: '6px 12px',
-                      backgroundColor: rule.enabled ? '#f4f5f7' : '#0052CC',
-                      color: rule.enabled ? '#42526e' : 'white',
+                      backgroundColor: rule.active !== false ? '#f4f5f7' : '#0052CC',
+                      color: rule.active !== false ? '#42526e' : 'white',
                       border: 'none',
                       borderRadius: '4px',
                       cursor: 'pointer',
                       fontSize: '12px'
                     }}
                   >
-                    {rule.enabled ? 'Disable' : 'Enable'}
+                    {rule.active !== false ? 'Deactivate' : 'Activate'}
                   </button>
                   <button
                     onClick={() => onEditRule(rule.ruleId)}

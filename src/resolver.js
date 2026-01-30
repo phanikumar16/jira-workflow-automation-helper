@@ -2,10 +2,39 @@
  * Resolver for Custom UI routes and API invocations
  */
 
-const Resolver = require('@forge/resolver');
-const { storage } = require('@forge/api');
 
+const Resolver = require('@forge/resolver').default;
+const { ruleStorage } = require('./storage');
 const resolver = new Resolver();
+
+// Get all rules
+resolver.define('getAllRules', async () => {
+  return await ruleStorage.getAllRules();
+});
+
+// Create a new rule
+resolver.define('createRule', async (req) => {
+  const rule = req.payload.rule;
+  return await ruleStorage.createRule(rule);
+});
+
+// Update a rule
+resolver.define('updateRule', async (req) => {
+  const { ruleId, updates } = req.payload;
+  return await ruleStorage.updateRule(ruleId, updates);
+});
+
+// Delete a rule
+resolver.define('deleteRule', async (req) => {
+  const { ruleId } = req.payload;
+  return await ruleStorage.deleteRule(ruleId);
+});
+
+// Toggle rule active/inactive
+resolver.define('toggleRule', async (req) => {
+  const { ruleId } = req.payload;
+  return await ruleStorage.toggleRule(ruleId);
+});
 
 // Debug: Check what's in storage
 resolver.define('debugStorage', async () => {

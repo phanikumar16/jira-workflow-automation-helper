@@ -171,10 +171,10 @@ const ActionExecutor = {
   },
   
   createSubtask: async function(issue, params) {
-    const { summary, description } = params;
-    
+    let { summary, description } = params;
+    // Auto-generate summary if not provided
     if (!summary) {
-      throw new Error('Subtask summary is required');
+      summary = `Auto-generated subtask for ${issue.key}`;
     }
     
     // Check if subtask with same summary already exists
@@ -235,6 +235,7 @@ const ActionExecutor = {
 // ===== MAIN EVENT HANDLER =====
 
 exports.run = async function run(event) {
+  console.log('[DEBUG] Trigger function called. Event:', JSON.stringify(event, null, 2));
   console.log('');
   console.log('╔════════════════════════════════════════╗');
   console.log('║  AUTOMATION TRIGGERED                  ║');
@@ -271,47 +272,38 @@ exports.run = async function run(event) {
     console.log(`[RULES] Total rules: ${rules.length}`);
     console.log(`[RULES] Rules:`, JSON.stringify(rules, null, 2));
     
-    const enabledRules = rules.filter(r => r.enabled);
-    console.log(`[RULES] Enabled rules: ${enabledRules.length}`);
-    
-    if (enabledRules.length === 0) {
-      console.log('[RULES] No enabled rules found');
+    const activeRules = rules.filter(r => r.active !== false);
+    console.log(`[RULES] Active rules: ${activeRules.length}`);
+    if (activeRules.length === 0) {
+      console.log('[RULES] No active rules found');
       return;
     }
-    
     // Evaluate and execute each rule
-    for (const rule of enabledRules) {
+    for (const rule of activeRules) {
       console.log(`\n[RULE] Checking: "${rule.name}"`);
       console.log(`[RULE] Trigger: ${rule.trigger}`);
-      
       // Check if trigger matches
       const triggerMatches = 
         rule.trigger === 'both' ||
         (rule.trigger === 'created' && event.eventType === 'issue_created') ||
         (rule.trigger === 'updated' && event.eventType === 'issue_updated');
-      
       if (!triggerMatches) {
         console.log(`[RULE] ✗ Trigger doesn't match`);
         continue;
       }
-      
       // Evaluate conditions
       const conditionsMet = await ConditionEvaluator.evaluate(
         rule.conditions,
         event.issue,
         event
       );
-      
       if (!conditionsMet) {
         console.log(`[RULE] ✗ Conditions not met`);
         continue;
       }
-      
       console.log(`[RULE] ✓ Conditions met! Executing actions...`);
-      
       // Execute actions
       await ActionExecutor.execute(rule.actions, event.issue);
-      
       console.log(`[RULE] ✓ Rule completed successfully`);
     }
     
